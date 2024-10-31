@@ -1,0 +1,153 @@
+---
+title: "Illustrative Example"
+author: "Alex Carriero"
+output: html_document
+---
+
+# Set Up
+```{r, message = F, warning = F}
+# libraries
+library(tidyverse)
+library(caret)
+library(kernelshap)
+library(shapviz)
+```
+
+# Data Generating Mechanism 
+```{r}
+# data generation 
+
+# seed
+set.seed(119)
+
+# population sample size
+n = 200000
+
+# generate variable A and variable X
+a <- rbinom(n, size = 1, prob = 0.2) 
+x <- 3*a + rnorm(n, mean = 0, sd = 1) # A causes X
+
+# generate variable B
+b <- runif(n, min = 0, max = 1)
+
+# generate variable C and variable C
+z <- rnorm(n, mean = 0, sd = 1)
+c <- ifelse(z > 0.67, 1, 0) # Z causes C
+
+# generate risk of kidney disease
+lp <- x + 1.5*b + 2*z + rnorm(n, mean = 0, sd = 0.25) - 1.3 # linear predictor
+p  <- exp(lp) / (1 + exp(lp)) # risk of outcome
+
+# visualize true risk in population
+hist(p)
+
+# generate outcome variable 
+out <- rbinom(n, size = 1, prob = p)
+
+# generate variable Y 
+y <- rbinom(n, size = 1, prob = ifelse( (p + b) > 1, 1, 0)) # Y is caused by outcome 
+
+df <- tibble(
+  "Smoking Status (variable A)" = a, 
+  "Hypertension (variable X)" = x, 
+  "Age (variable B)" = b, 
+  "Insulin Prescription (variable C)" = c, 
+  Y = y,
+  out = out
+)
+
+# filter for only hospitalized patients (filter population based on Y)
+df <- df %>% filter (Y == 1)
+
+# filter for model development sample size
+df <- sample_n(df, 20000, replace = FALSE)  %>% select(-Y)
+
+# show data frame 
+# head(df)
+```
+
+# XGBoost 
+```{r, message = F, warning = F, results = "hide"}
+# optimize for model deviance
+deviance <- function(data, lev = NULL, model = NULL) {
+  obs  <- as.numeric(data$obs) - 1
+  pred <- data$one
+  
+  pred[pred == 0] <- 1e-16
+  pred[pred == 1] <- 1-1e-16
+  
+  dev <- -2*sum(obs*log(pred) + (1-obs)*log(1-pred))
+  
+  c(Deviance = dev)
+}
+
+# formatting data
+df$out  = factor(df$out, levels=c(0,1), ordered = TRUE)
+levels(df$out) <- c("zero", "one")
+
+# fit model 
+train_ctrl <- 
+    trainControl(
+          method = "cv", 
+          number = 5, 
+          summaryFunction = deviance, 
+          classProbs = T,
+          allowParallel = F
+        )
+      
+mod <- 
+    train(
+          out ~., 
+          data = df, 
+          method = "xgbTree", 
+          metric = "Deviance",
+          maximize = FALSE, 
+          trControl = train_ctrl, 
+          verbosity = 0, 
+          verbose = FALSE, 
+          tuneLength = 3
+        )
+
+# predict function for shap
+predict_fun <- function(mod, newdata){
+  predict(mod, newdata, type = "prob")["one"]
+}   
+
+# shap 
+features <- colnames(df %>% select(-out))
+x_train  <- df %>% select(-out)
+bg_x <- df[sample(nrow(df), 5000), ]
+
+shap <- kernelshap(mod, x_train, bg_X = bg_x, pred_fun= predict_fun)
+plot <- shapviz(shap)
+```
+
+```{r}
+# visualize results 
+sv_importance(plot, kind = "bee") + theme_minimal() 
+sv_importance(plot, show_numbers = TRUE) + theme_minimal()
+```
+
+# Logistic Regression 
+```{r, message = F, warning = F, comment = "   "}
+# fit model 
+mod <- glm(out ~., family = "binomial", data = df)
+summary(mod)
+```
+
+```{r, message = F, warning = F, comment = "   ", results = "hide"}
+# shap 
+features <- colnames(df %>% select(-out))
+x_train  <- df %>% select(-out)
+bg_x <- df[sample(nrow(df), 500), ]
+
+shap <- kernelshap(mod, x_train, bg_X = bg_x)
+plot <- shapviz(shap)
+```
+
+```{r}
+# visualize results
+sv_importance(plot, kind = "bee")
+sv_importance(plot, show_numbers = TRUE)
+```
+
