@@ -380,7 +380,7 @@ x &lt;- 3*a + rnorm(n, mean = 0, sd = 1) # A causes X
 # generate variable B
 b &lt;- runif(n, min = 0, max = 1)
 
-# generate variable C and variable C
+# generate variable Z and variable C
 z &lt;- rnorm(n, mean = 0, sd = 1)
 c &lt;- ifelse(z &gt; 0.67, 1, 0) # Z causes C
 
@@ -395,7 +395,7 @@ hist(p)</code></pre>
 out &lt;- rbinom(n, size = 1, prob = p)
 
 # generate variable Y 
-y &lt;- rbinom(n, size = 1, prob = ifelse( (p + b) &gt; 1, 1, 0)) # Y is caused by outcome 
+y &lt;- rbinom(n, size = 1, prob = ifelse( (p + b) &gt; 1, 1, 0)) # Y is caused by outcome and variable B
 
 df &lt;- tibble(
   &quot;Smoking Status (variable A)&quot; = a, 
