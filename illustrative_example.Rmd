@@ -8,8 +8,9 @@ output: html_document
 ```{r, message = F, warning = F}
 # libraries
 library(tidyverse)
-library(caret)
+library(xgboost)
 library(kernelshap)
+library(treeshap)
 library(shapviz)
 ```
 
@@ -42,7 +43,7 @@ p  <- exp(lp) / (1 + exp(lp)) # risk of outcome
 hist(p)
 
 # generate outcome variable 
-out <- rbinom(n, size = 1, prob = p)
+out <- rbinom(n, size = 1, prob = p) %>% as.factor()
 
 # generate variable Y 
 y <- rbinom(n, size = 1, prob = ifelse( (p + b) > 1, 1, 0)) # Y is caused by outcome and variable B
@@ -67,65 +68,26 @@ df <- sample_n(df, 20000, replace = FALSE)  %>% select(-Y)
 ```
 
 # XGBoost 
-```{r, message = F, warning = F, results = "hide"}
-# optimize for model deviance
-deviance <- function(data, lev = NULL, model = NULL) {
-  obs  <- as.numeric(data$obs) - 1
-  pred <- data$one
-  
-  pred[pred == 0] <- 1e-16
-  pred[pred == 1] <- 1-1e-16
-  
-  dev <- -2*sum(obs*log(pred) + (1-obs)*log(1-pred))
-  
-  c(Deviance = dev)
-}
 
-# formatting data
-df$out  = factor(df$out, levels=c(0,1), ordered = TRUE)
-levels(df$out) <- c("zero", "one")
+```{r, message = F}
+# xgboost model
+# optimized with logloss
 
-# fit model 
-train_ctrl <- 
-    trainControl(
-          method = "cv", 
-          number = 5, 
-          summaryFunction = deviance, 
-          classProbs = T,
-          allowParallel = F
-        )
-      
-mod <- 
-    train(
-          out ~., 
-          data = df, 
-          method = "xgbTree", 
-          metric = "Deviance",
-          maximize = FALSE, 
-          trControl = train_ctrl, 
-          verbosity = 0, 
-          verbose = FALSE, 
-          tuneLength = 3
-        )
-
-# predict function for shap
-predict_fun <- function(mod, newdata){
-  predict(mod, newdata, type = "prob")["one"]
-}   
-
-# shap 
-features <- colnames(df %>% select(-out))
-x_train  <- df %>% select(-out)
-bg_x <- df[sample(nrow(df), 5000), ]
-
-shap <- kernelshap(mod, x_train, bg_X = bg_x, pred_fun= predict_fun)
-plot <- shapviz(shap)
+mod <- xgboost(df %>% select(-out) %>% as.matrix(), df$out %>% as.numeric() -1, 
+               max.depth = 2, eta = 0.3, nround = 50, objective = "binary:logistic", verbose = F)
 ```
 
+
 ```{r}
-# visualize results 
-sv_importance(plot, kind = "bee") + theme_minimal() 
-sv_importance(plot, show_numbers = TRUE) + theme_minimal()
+# treeSHAP
+bg_x <- df[sample(nrow(df), 5000), ]
+unified_model <- xgboost.unify(mod, data = bg_x)
+
+sv_tree <- treeshap(unified_model, df %>% select(-out), verbose = FALSE)
+tshap = shapviz(sv_tree)
+
+sv_importance(tshap, kind = "bee") + theme_minimal()
+sv_importance(tshap, show_numbers = TRUE) + theme_minimal()
 ```
 
 # Logistic Regression 
@@ -136,7 +98,7 @@ summary(mod)
 ```
 
 ```{r, message = F, warning = F, comment = "   ", results = "hide"}
-# shap 
+# kernel shap 
 features <- colnames(df %>% select(-out))
 x_train  <- df %>% select(-out)
 bg_x <- df[sample(nrow(df), 500), ]
@@ -147,7 +109,7 @@ plot <- shapviz(shap)
 
 ```{r}
 # visualize results
-sv_importance(plot, kind = "bee")
-sv_importance(plot, show_numbers = TRUE)
+sv_importance(plot, kind = "bee") + theme_minimal()
+sv_importance(plot, show_numbers = TRUE) + theme_minimal()
 ```
 
